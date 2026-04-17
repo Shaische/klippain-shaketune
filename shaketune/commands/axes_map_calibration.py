@@ -62,10 +62,11 @@ def axes_map_calibration(gcmd, config, st_process: ShakeTuneProcess) -> None:
     kin_info = toolhead.kin.get_status(systime)
     mid_x = (kin_info['axis_minimum'].x + kin_info['axis_maximum'].x) / 2
     mid_y = (kin_info['axis_minimum'].y + kin_info['axis_maximum'].y) / 2
-    _, _, _, E = toolhead.get_position()
+    pos = list(toolhead.get_position())  # custom Klipper may return >4 axes (e.g. XYZABCD)
 
-    # Going to the start position
-    toolhead.move([mid_x - SEGMENT_LENGTH / 2, mid_y - SEGMENT_LENGTH / 2, z_height, E], feedrate_travel)
+    # Going to the start position — only change XYZ, preserve all extra axes
+    pos[0], pos[1], pos[2] = mid_x - SEGMENT_LENGTH / 2, mid_y - SEGMENT_LENGTH / 2, z_height
+    toolhead.move(pos, feedrate_travel)
     toolhead.dwell(0.5)
 
     creator = st_process.get_graph_creator()
@@ -75,19 +76,22 @@ def axes_map_calibration(gcmd, config, st_process: ShakeTuneProcess) -> None:
     # Start the measurements and do the movements (+X, +Y and then +Z)
     accelerometer.start_recording(measurements_manager, name='axesmap_X', append_time=True)
     toolhead.dwell(0.5)
-    toolhead.move([mid_x + SEGMENT_LENGTH / 2, mid_y - SEGMENT_LENGTH / 2, z_height, E], speed)
+    pos[0], pos[1] = mid_x + SEGMENT_LENGTH / 2, mid_y - SEGMENT_LENGTH / 2
+    toolhead.move(pos, speed)
     toolhead.dwell(0.5)
     accelerometer.stop_recording()
     toolhead.dwell(0.5)
     accelerometer.start_recording(measurements_manager, name='axesmap_Y', append_time=True)
     toolhead.dwell(0.5)
-    toolhead.move([mid_x + SEGMENT_LENGTH / 2, mid_y + SEGMENT_LENGTH / 2, z_height, E], speed)
+    pos[0], pos[1] = mid_x + SEGMENT_LENGTH / 2, mid_y + SEGMENT_LENGTH / 2
+    toolhead.move(pos, speed)
     toolhead.dwell(0.5)
     accelerometer.stop_recording()
     toolhead.dwell(0.5)
     accelerometer.start_recording(measurements_manager, name='axesmap_Z', append_time=True)
     toolhead.dwell(0.5)
-    toolhead.move([mid_x + SEGMENT_LENGTH / 2, mid_y + SEGMENT_LENGTH / 2, z_height + SEGMENT_LENGTH, E], speed)
+    pos[2] = z_height + SEGMENT_LENGTH
+    toolhead.move(pos, speed)
     toolhead.dwell(0.5)
     accelerometer.stop_recording()
     toolhead.dwell(0.5)

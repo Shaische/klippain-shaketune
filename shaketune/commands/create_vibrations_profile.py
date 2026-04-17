@@ -77,11 +77,13 @@ def create_vibrations_profile(gcmd, config, st_process: ShakeTuneProcess) -> Non
     kin_info = toolhead.kin.get_status(systime)
     mid_x = (kin_info['axis_minimum'].x + kin_info['axis_maximum'].x) / 2
     mid_y = (kin_info['axis_minimum'].y + kin_info['axis_maximum'].y) / 2
-    X, Y, _, E = toolhead.get_position()
+    pos = list(toolhead.get_position())  # custom Klipper may return >4 axes (e.g. XYZABCD)
 
-    # Going to the start position
-    toolhead.move([X, Y, z_height, E], feedrate_travel / 10)
-    toolhead.move([mid_x - 15, mid_y - 15, z_height, E], feedrate_travel)
+    # Going to the start position — only change XYZ, preserve all extra axes
+    pos[2] = z_height
+    toolhead.move(pos, feedrate_travel / 10)
+    pos[0], pos[1] = mid_x - 15, mid_y - 15
+    toolhead.move(pos, feedrate_travel)
     toolhead.dwell(0.5)
 
     creator = st_process.get_graph_creator()
@@ -123,7 +125,8 @@ def create_vibrations_profile(gcmd, config, st_process: ShakeTuneProcess) -> Non
             # Calculate angle coordinates using trigonometry and length multiplier and move to start point
             dX = (size / 2) * math.cos(radian_angle) * segment_length_multiplier
             dY = (size / 2) * math.sin(radian_angle) * segment_length_multiplier
-            toolhead.move([mid_x - dX, mid_y - dY, z_height, E], feedrate_travel)
+            pos[0], pos[1] = mid_x - dX, mid_y - dY
+            toolhead.move(pos, feedrate_travel)
 
             # Adjust the number of back and forth movements based on speed to also save time on lower speed range
             # 3 movements are done by default, reduced to 2 between 150-250mm/s and to 1 under 150mm/s.
@@ -137,8 +140,10 @@ def create_vibrations_profile(gcmd, config, st_process: ShakeTuneProcess) -> Non
             name = f'vib_an{curr_angle:.2f}sp{curr_speed:.2f}'.replace('.', '_')
             accelerometer.start_recording(measurements_manager, name=name, append_time=True)
             for _ in range(movements):
-                toolhead.move([mid_x + dX, mid_y + dY, z_height, E], curr_speed)
-                toolhead.move([mid_x - dX, mid_y - dY, z_height, E], curr_speed)
+                pos[0], pos[1] = mid_x + dX, mid_y + dY
+                toolhead.move(pos, curr_speed)
+                pos[0], pos[1] = mid_x - dX, mid_y - dY
+                toolhead.move(pos, curr_speed)
             accelerometer.stop_recording()
 
             toolhead.dwell(0.3)
