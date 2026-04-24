@@ -100,8 +100,9 @@ class BeltsComputation:
             similarity_factor = np.clip(similarity_factor, 0, 100)
             ConsoleOutput.print(f'Belts estimated similarity: {similarity_factor:.1f}%')
 
-            mhi = self._compute_mhi(similarity_factor, signal1, signal2)
-            ConsoleOutput.print(f'Mechanical health: {mhi}')
+            mhi_score, mhi_grade = self._compute_mhi(similarity_factor, signal1, signal2)
+            mhi = mhi_grade  # store grade label in BeltsResult for graph rendering
+            ConsoleOutput.print(f'Mechanical health: {mhi_grade} (score: {mhi_score:.1f}/100)')
 
         # Create metadata
         metadata = GraphMetadata(
@@ -202,8 +203,11 @@ class BeltsComputation:
             paired_peaks=paired_peaks, unpaired_peaks1=unpaired_peaks1, unpaired_peaks2=unpaired_peaks2
         )
 
-    def _compute_mhi(self, similarity_factor: float, signal1: SignalData, signal2: SignalData) -> str:
-        """Compute Mechanical Health Indicator"""
+    def _compute_mhi(self, similarity_factor: float, signal1: SignalData, signal2: SignalData) -> tuple:
+        """Compute Mechanical Health Indicator.
+
+        Returns (score: float, grade: str) tuple.
+        """
         num_unpaired_peaks = len(signal1.unpaired_peaks) + len(signal2.unpaired_peaks)
         num_paired_peaks = len(signal1.paired_peaks)
 
@@ -228,22 +232,24 @@ class BeltsComputation:
             mhi -= unpaired_peak_penalty
 
         # Ensure the result lies between 0 and 100
-        mhi = np.clip(mhi, 0, 100)
+        score = float(np.clip(mhi, 0, 100))
 
-        return self._mhi_lut(mhi)
+        return score, self._mhi_lut(score)
 
     def _mhi_lut(self, mhi: float) -> str:
-        """Convert MHI value to textual description"""
+        """Convert MHI value to standardized grade label.
+
+        Uses the same 4-tier grading system (Excellent/Good/Fair/Poor)
+        as other RapidSMT calibration modules for UI consistency.
+        """
         ranges = [
-            (70, 100, 'Excellent mechanical health'),
-            (55, 70, 'Good mechanical health'),
-            (45, 55, 'Acceptable mechanical health'),
-            (30, 45, 'Potential signs of a mechanical issue'),
-            (15, 30, 'Likely a mechanical issue'),
-            (0, 15, 'Mechanical issue detected'),
+            (70, 100, 'Excellent'),
+            (55, 70, 'Good'),
+            (30, 55, 'Fair'),
+            (0, 30, 'Poor'),
         ]
         mhi = np.clip(mhi, 0, 100)
         return next(
-            (message for lower, upper, message in ranges if lower < mhi <= upper),
-            'Unknown mechanical health',
+            (label for lower, upper, label in ranges if lower < mhi <= upper),
+            'Unknown',
         )

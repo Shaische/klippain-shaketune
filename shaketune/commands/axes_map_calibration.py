@@ -64,8 +64,12 @@ def axes_map_calibration(gcmd, config, st_process: ShakeTuneProcess) -> None:
     mid_y = (kin_info['axis_minimum'].y + kin_info['axis_maximum'].y) / 2
     pos = list(toolhead.get_position())  # custom Klipper may return >4 axes (e.g. XYZABCD)
 
-    # Going to the start position — only change XYZ, preserve all extra axes
-    pos[0], pos[1], pos[2] = mid_x - SEGMENT_LENGTH / 2, mid_y - SEGMENT_LENGTH / 2, z_height
+    # RapidPlacer patch: the fake Z stepper is never homed by G28 (only X/Y are real).
+    # Tell Klipper Z is at 0 so toolhead.move() doesn't reject the command.
+    gcode.run_script_from_command('SET_KINEMATIC_POSITION Z=0')
+
+    # Going to the start position — only change XY, keep Z at 0 (fake axis)
+    pos[0], pos[1], pos[2] = mid_x - SEGMENT_LENGTH / 2, mid_y - SEGMENT_LENGTH / 2, 0
     toolhead.move(pos, feedrate_travel)
     toolhead.dwell(0.5)
 
@@ -88,12 +92,37 @@ def axes_map_calibration(gcmd, config, st_process: ShakeTuneProcess) -> None:
     toolhead.dwell(0.5)
     accelerometer.stop_recording()
     toolhead.dwell(0.5)
+    # RapidPlacer patch: Z axis uses manual_stepper left_z (nozzle on head),
+    # not the fake toolhead Z. The nozzle motor is on the head PCB next to
+    # the ADXL, so its vibration will be detected by the accelerometer.
+    z_stepper_name = gcmd.get('Z_STEPPER', default='left_z')
+    z_gcode_axis = gcmd.get('Z_GCODE_AXIS', default='A')
+    z_speed = gcmd.get_float('Z_SPEED', default=50.0)  # match macros.cfg homing speed
+    z_move_distance = min(15.0, SEGMENT_LENGTH)  # nozzle range is ~22mm, use 15mm
+
+    # Unregister from G-code axis (required before MANUAL_STEPPER moves)
+    gcode.run_script_from_command(
+        f'MANUAL_STEPPER STEPPER={z_stepper_name} GCODE_AXIS='
+    )
+    gcode.run_script_from_command(
+        f'MANUAL_STEPPER STEPPER={z_stepper_name} SET_POSITION=21.9'
+    )
+    toolhead.dwell(0.3)
     accelerometer.start_recording(measurements_manager, name='axesmap_Z', append_time=True)
     toolhead.dwell(0.5)
-    pos[2] = z_height + SEGMENT_LENGTH
-    toolhead.move(pos, speed)
+    gcode.run_script_from_command(
+        f'MANUAL_STEPPER STEPPER={z_stepper_name} MOVE={21.9 - z_move_distance} SPEED={z_speed}'
+    )
     toolhead.dwell(0.5)
     accelerometer.stop_recording()
+    toolhead.dwell(0.3)
+    # Return nozzle to home position and re-register as G-code axis
+    gcode.run_script_from_command(
+        f'MANUAL_STEPPER STEPPER={z_stepper_name} MOVE=21.9 SPEED={z_speed}'
+    )
+    gcode.run_script_from_command(
+        f'MANUAL_STEPPER STEPPER={z_stepper_name} GCODE_AXIS={z_gcode_axis}'
+    )
     toolhead.dwell(0.5)
 
     # Re-enable the input shaper if it was active
