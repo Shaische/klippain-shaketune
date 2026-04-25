@@ -206,7 +206,8 @@ class ResonanceTestManager:
         reactor = self.reactor
         systime = reactor.monotonic()
         toolhead_info = toolhead.get_status(systime)
-        X, Y, Z, E = toolhead.get_position()
+        full_pos = list(toolhead.get_position())
+        X, Y, Z, E = full_pos[:4]  # machines may have >4 axes (extra manual steppers)
 
         old_max_accel = toolhead_info['max_accel']
 
@@ -253,10 +254,10 @@ class ResonanceTestManager:
             if v * last_v < 0:
                 d_decel = -last_v2 * half_inv_accel if accel != 0 else 0.0
                 decel_x, decel_y, decel_z = self._project_distance(d_decel, normalized_direction)
-                toolhead.move([X + decel_x, Y + decel_y, Z + decel_z, E], abs_last_v)
-                toolhead.move([nX, nY, nZ, E], abs_v)
+                toolhead.move([X + decel_x, Y + decel_y, Z + decel_z] + full_pos[3:], abs_last_v)
+                toolhead.move([nX, nY, nZ] + full_pos[3:], abs_v)
             else:
-                toolhead.move([nX, nY, nZ, E], max(abs_v, abs_last_v))
+                toolhead.move([nX, nY, nZ] + full_pos[3:], max(abs_v, abs_last_v))
 
             if math.floor(freq) > math.floor(last_freq):
                 ConsoleOutput.print(f'Testing frequency: {freq:.1f} Hz')
@@ -273,7 +274,7 @@ class ResonanceTestManager:
             d_decel = -0.5 * last_v2 / old_max_accel if old_max_accel != 0 else 0
             ddX, ddY, ddZ = self._project_distance(d_decel, normalized_direction)
             self.compat.set_toolhead_acceleration(self.gcode, old_max_accel)
-            toolhead.move([X + ddX, Y + ddY, Z + ddZ, E], abs(last_v))
+            toolhead.move([X + ddX, Y + ddY, Z + ddZ] + full_pos[3:], abs(last_v))
 
         # Restore the previous acceleration values
         if old_mcr is not None:  # minimum_cruise_ratio found: Klipper >= v0.12.0-239
