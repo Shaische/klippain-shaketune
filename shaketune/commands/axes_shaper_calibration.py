@@ -15,6 +15,7 @@ from ..helpers.common_func import AXIS_CONFIG
 from ..helpers.compat import KlipperCompatibility
 from ..helpers.console_output import ConsoleOutput
 from ..helpers.resonance_test import vibrate_axis
+from ..helpers.restore import restore_motion_settings
 from ..shaketune_process import ShakeTuneProcess
 
 
@@ -95,67 +96,62 @@ def axes_shaper_calibration(gcmd, klipper_config, st_process: ShakeTuneProcess) 
     else:
         input_shaper = None
 
-    creator = st_process.get_graph_creator()
+    # RapidPlacer patch: whatever happens from here on (an error, an emergency
+    # stop), the input shaper and acceleration limits are put back.
+    try:
+        creator = st_process.get_graph_creator()
 
-    # Filter axis configurations based on user input, assuming 'axis_input' can be 'x', 'y', 'all' (that means 'x' and 'y')
-    filtered_config = [
-        a for a in AXIS_CONFIG if a['axis'] == axis_input or (axis_input == 'all' and a['axis'] in ('x', 'y'))
-    ]
-    for config in filtered_config:
-        filename = creator.get_folder() / f'{creator.get_type().replace(" ", "")}_{date}_{config["label"]}'
-        measurements_manager = MeasurementsManager(
-            st_process.get_st_config().chunk_size, printer.get_reactor(), filename
-        )
+        # Filter axis configurations based on user input, assuming 'axis_input' can be 'x', 'y', 'all' (that means 'x' and 'y')
+        filtered_config = [
+            a for a in AXIS_CONFIG if a['axis'] == axis_input or (axis_input == 'all' and a['axis'] in ('x', 'y'))
+        ]
+        for config in filtered_config:
+            filename = creator.get_folder() / f'{creator.get_type().replace(" ", "")}_{date}_{config["label"]}'
+            measurements_manager = MeasurementsManager(
+                st_process.get_st_config().chunk_size, printer.get_reactor(), filename
+            )
 
-        toolhead.manual_move(point, feedrate_travel)
-        toolhead.dwell(0.5)
-        toolhead.wait_moves()
+            toolhead.manual_move(point, feedrate_travel)
+            toolhead.dwell(0.5)
+            toolhead.wait_moves()
 
-        # First we need to find the accelerometer chip suited for the axis (if not provided by the user)
-        current_accel_chip = accel_chip  # Use manually specified chip if provided
-        if current_accel_chip is None:
-            current_accel_chip = Accelerometer.find_axis_accelerometer(printer, config['axis'])
-        if current_accel_chip is None:
-            raise gcmd.error('No suitable accelerometer found for measurement!')
-        k_accelerometer = printer.lookup_object(current_accel_chip, None)
-        if k_accelerometer is None:
-            raise gcmd.error(f'Accelerometer chip "{current_accel_chip}" not found!')
-        accelerometer = Accelerometer(k_accelerometer, printer.get_reactor())
+            # First we need to find the accelerometer chip suited for the axis (if not provided by the user)
+            current_accel_chip = accel_chip  # Use manually specified chip if provided
+            if current_accel_chip is None:
+                current_accel_chip = Accelerometer.find_axis_accelerometer(printer, config['axis'])
+            if current_accel_chip is None:
+                raise gcmd.error('No suitable accelerometer found for measurement!')
+            k_accelerometer = printer.lookup_object(current_accel_chip, None)
+            if k_accelerometer is None:
+                raise gcmd.error(f'Accelerometer chip "{current_accel_chip}" not found!')
+            accelerometer = Accelerometer(k_accelerometer, printer.get_reactor())
 
-        # Then do the actual measurements
-        ConsoleOutput.print(f'Measuring {config["label"]}...')
-        accelerometer.start_recording(measurements_manager, name=config['label'], append_time=True)
-        test_params = vibrate_axis(
-            toolhead,
-            gcode,
-            config['direction'],
-            min_freq,
-            max_freq,
-            hz_per_sec,
-            accel_per_hz,
-            res_tester,
-            klipper_config,
-        )
-        accelerometer.stop_recording()
-        toolhead.dwell(0.5)
-        toolhead.wait_moves()
+            # Then do the actual measurements
+            ConsoleOutput.print(f'Measuring {config["label"]}...')
+            accelerometer.start_recording(measurements_manager, name=config['label'], append_time=True)
+            test_params = vibrate_axis(
+                toolhead,
+                gcode,
+                config['direction'],
+                min_freq,
+                max_freq,
+                hz_per_sec,
+                accel_per_hz,
+                res_tester,
+                klipper_config,
+            )
+            accelerometer.stop_recording()
+            toolhead.dwell(0.5)
+            toolhead.wait_moves()
 
-        # And finally generate the graph for each measured axis
-        ConsoleOutput.print(f'{config["axis"].upper()} axis frequency profile generation...')
-        ConsoleOutput.print('This may take some time (1-3min)')
-        creator.configure(scv, max_sm, test_params, max_scale)
-        creator.define_output_target(filename)
-        measurements_manager.save_stdata()
-        st_process.run(filename)
-        st_process.wait_for_completion()
-        toolhead.dwell(1)
-
-    # Re-enable the input shaper if it was active
-    if input_shaper is not None:
-        input_shaper.enable_shaping()
-
-    # Restore the previous acceleration values
-    if old_mcr is not None:  # minimum_cruise_ratio found: Klipper >= v0.12.0-239
-        gcode.run_script_from_command(f'SET_VELOCITY_LIMIT ACCEL={old_accel} MINIMUM_CRUISE_RATIO={old_mcr}')
-    else:  # minimum_cruise_ratio not found: Klipper < v0.12.0-239
-        gcode.run_script_from_command(f'SET_VELOCITY_LIMIT ACCEL={old_accel}')
+            # And finally generate the graph for each measured axis
+            ConsoleOutput.print(f'{config["axis"].upper()} axis frequency profile generation...')
+            ConsoleOutput.print('This may take some time (1-3min)')
+            creator.configure(scv, max_sm, test_params, max_scale)
+            creator.define_output_target(filename)
+            measurements_manager.save_stdata()
+            st_process.run(filename)
+            st_process.wait_for_completion()
+            toolhead.dwell(1)
+    finally:
+        restore_motion_settings(gcode, input_shaper, old_accel, old_mcr)

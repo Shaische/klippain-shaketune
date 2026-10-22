@@ -16,6 +16,7 @@ from ..helpers.compat import KlipperCompatibility
 from ..helpers.console_output import ConsoleOutput
 from ..helpers.motors_config_parser import MotorsConfigParser
 from ..helpers.resonance_test import vibrate_axis
+from ..helpers.restore import restore_motion_settings
 from ..shaketune_process import ShakeTuneProcess
 
 
@@ -113,42 +114,37 @@ def compare_belts_responses(gcmd, klipper_config, st_process: ShakeTuneProcess) 
     else:
         input_shaper = None
 
-    creator = st_process.get_graph_creator()
-    filename = creator.get_folder() / f'{creator.get_type().replace(" ", "")}_{date}'
-    measurements_manager = MeasurementsManager(st_process.get_st_config().chunk_size, printer.get_reactor(), filename)
+    # RapidPlacer patch: whatever happens while measuring (an error, an
+    # emergency stop), the input shaper and acceleration limits are put back.
+    try:
+        creator = st_process.get_graph_creator()
+        filename = creator.get_folder() / f'{creator.get_type().replace(" ", "")}_{date}'
+        measurements_manager = MeasurementsManager(st_process.get_st_config().chunk_size, printer.get_reactor(), filename)
 
-    # Run the test for each axis
-    for config in filtered_config:
-        toolhead.manual_move(point, feedrate_travel)
-        toolhead.dwell(0.5)
-        toolhead.wait_moves()
+        # Run the test for each axis
+        for config in filtered_config:
+            toolhead.manual_move(point, feedrate_travel)
+            toolhead.dwell(0.5)
+            toolhead.wait_moves()
 
-        ConsoleOutput.print(f'Measuring {config["label"]}...')
-        accelerometer.start_recording(measurements_manager, name=config['label'], append_time=True)
-        test_params = vibrate_axis(
-            toolhead,
-            gcode,
-            config['direction'],
-            min_freq,
-            max_freq,
-            hz_per_sec,
-            accel_per_hz,
-            res_tester,
-            klipper_config,
-        )
-        accelerometer.stop_recording()
-        toolhead.dwell(5)  # Wait 5 seconds to let the printer settle down (needed for low power hosts computers)
-        toolhead.wait_moves()
-
-    # Re-enable the input shaper if it was active
-    if input_shaper is not None:
-        input_shaper.enable_shaping()
-
-    # Restore the previous acceleration values
-    if old_mcr is not None:  # minimum_cruise_ratio found: Klipper >= v0.12.0-239
-        gcode.run_script_from_command(f'SET_VELOCITY_LIMIT ACCEL={old_accel} MINIMUM_CRUISE_RATIO={old_mcr}')
-    else:  # minimum_cruise_ratio not found: Klipper < v0.12.0-239
-        gcode.run_script_from_command(f'SET_VELOCITY_LIMIT ACCEL={old_accel}')
+            ConsoleOutput.print(f'Measuring {config["label"]}...')
+            accelerometer.start_recording(measurements_manager, name=config['label'], append_time=True)
+            test_params = vibrate_axis(
+                toolhead,
+                gcode,
+                config['direction'],
+                min_freq,
+                max_freq,
+                hz_per_sec,
+                accel_per_hz,
+                res_tester,
+                klipper_config,
+            )
+            accelerometer.stop_recording()
+            toolhead.dwell(5)  # Wait 5 seconds to let the printer settle down (needed for low power hosts computers)
+            toolhead.wait_moves()
+    finally:
+        restore_motion_settings(gcode, input_shaper, old_accel, old_mcr)
 
     # Run post-processing
     ConsoleOutput.print('Belts comparative frequency profile generation...')
